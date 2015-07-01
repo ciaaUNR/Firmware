@@ -133,6 +133,19 @@ extern "C" {
 #define ciaaRESOLUTION_4BITS        6
 #define ciaaRESOLUTION_3BITS        7
 
+
+#define ciaaPOSIX_IOCTL_GPIO_OUT 10
+#define ciaaPOSIX_IOCTL_GPIO_IN 11
+#define ciaaGPIO_0 (1<<0)
+#define ciaaGPIO_1 (1<<1)
+#define ciaaGPIO_2 (1<<2)
+#define ciaaGPIO_3 (1<<3)
+#define ciaaGPIO_4 (1<<4)
+#define ciaaGPIO_5 (1<<5)
+#define ciaaGPIO_6 (1<<6)
+#define ciaaGPIO_7 (1<<7)
+#define ciaaGPIO_8 (1<<8)
+
 /*==================[typedef]================================================*/
 
 /*==================[external data declaration]==============================*/
