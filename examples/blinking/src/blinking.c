@@ -53,20 +53,23 @@
  * PR           Pablo Ridolfi
  * JuCe         Juan Cecconi
  * GMuro        Gustavo Muro
- * ErPe         Eric Pernia
  */
 
 /*
  * modification history (new versions first)
  * -----------------------------------------------------------
- * 20150603 v0.0.3   ErPe change uint8 type by uint8_t
- *                        in line 172
  * 20141019 v0.0.2   JuCe add printf in each task,
  *                        remove trailing spaces
  * 20140731 v0.0.1   PR   first functional version
  */
 
 /*==================[inclusions]=============================================*/
+
+
+#include <stdio.h>
+#include <stdlib.h>
+
+
 #include "os.h"               /* <= operating system header */
 #include "ciaaPOSIX_stdio.h"  /* <= device handler header */
 #include "ciaaPOSIX_string.h" /* <= string header */
@@ -85,7 +88,9 @@
  *
  * Device path /dev/dio/out/0
  */
-static int32_t fd_out;
+static int32_t fd_out, fd_in, fd_gpio_out, fd_gpio_in;
+static uint32_t Periodic_Task_Counter;
+static uint8 pulsador1=0;
 
 /*==================[external data definition]===============================*/
 
@@ -105,6 +110,7 @@ int main(void)
 {
    /* Starts the operating system in the Application Mode 1 */
    /* This example has only one Application Mode */
+
    StartOS(AppMode1);
 
    /* StartOs shall never returns, but to avoid compiler warnings or errors
@@ -149,13 +155,24 @@ TASK(InitTask)
    /* print message (only on x86) */
    ciaaPOSIX_printf("Init Task...\n");
 
-   /* open CIAA digital outputs */
+   /* open CIAA GPIO inputs-outputs */
+
+   fd_gpio_out = ciaaPOSIX_open("/dev/gpio/out/0", O_RDWR);
+
+   fd_gpio_in = ciaaPOSIX_open("/dev/gpio/in/0", O_RDONLY);
+
+   /* open CIAA digital inputs-outputs */
+
    fd_out = ciaaPOSIX_open("/dev/dio/out/0", O_RDWR);
+
+   fd_in = ciaaPOSIX_open("/dev/dio/in/0", O_RDONLY);
 
    /* activate periodic task:
     *  - for the first time after 350 ticks (350 ms)
     *  - and then every 250 ticks (250 ms)
     */
+
+   Periodic_Task_Counter = 0;
    SetRelAlarm(ActivatePeriodicTask, 350, 250);
 
    /* terminate task */
@@ -170,15 +187,68 @@ TASK(InitTask)
  */
 TASK(PeriodicTask)
 {
-   uint8_t outputs;
+   uint8 outputs, inputs;
+   uint16 gpoutputs;
+   int32_t result;
 
-   /* write blinking message */
    ciaaPOSIX_printf("Blinking\n");
 
-   /* blink output */
-   ciaaPOSIX_read(fd_out, &outputs, 1);
-   outputs ^= 0x20;
+   /* Secuencia Aleatoria */
+   /*
+   outputs = (1<<(rand()%6));
    ciaaPOSIX_write(fd_out, &outputs, 1);
+   outputs = 0;
+   */
+   /***********************/
+
+   /* Escribe las 9 GPIO Salidas de manera intermitente */
+   /*
+   ciaaPOSIX_read(fd_gpio_out, &gpoutputs, 1);
+   gpoutputs ^= 0x1FF;
+   ciaaPOSIX_write(fd_gpio_out, &gpoutputs, 1);
+   */
+   /*****************************************************/
+
+   /* Uso ioclt para cambiar la GPIO 0 a entrada */
+   result = ciaaPOSIX_ioctl(fd_gpio_out, ciaaPOSIX_IOCTL_GPIO_IN, ciaaGPIO_0);
+
+   /* Leo las entradas GPIO */
+   /* Puenteando GPIO y GND devuelve 0, sino 1 */
+   ciaaPOSIX_read(fd_gpio_in, &gpoutputs, 1);
+
+   /* Leo las salidas GPIO */
+   ciaaPOSIX_read(fd_gpio_out, &gpoutputs, 1);
+
+
+   /* Lectura Pulsador 1 */
+
+   ciaaPOSIX_read(fd_in, &inputs, 1);
+
+   if(inputs == 1){
+	   if(pulsador1==0){
+		   pulsador1=1;
+	   }else{
+		   pulsador1=0;
+	   }
+   }
+
+   /* Secuencia de los 6 leds */
+   /* La inicio o pauso con el pulsador 1 */
+
+   if(pulsador1 == 1){
+
+	   ciaaPOSIX_read(fd_out, &outputs, 1);
+
+	   outputs ^= 1<<Periodic_Task_Counter;
+
+	   ciaaPOSIX_write(fd_out, &outputs, 1);
+
+	   Periodic_Task_Counter++;
+	   if(Periodic_Task_Counter>5){
+		   Periodic_Task_Counter=0;
+	   }
+   }
+
 
    /* terminate task */
    TerminateTask();
