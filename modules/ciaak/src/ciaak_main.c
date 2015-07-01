@@ -63,6 +63,8 @@
 #include "ciaaDriverFlash.h"
 #include "ciaaDriverAio.h"
 #include "ciaaDriverDio.h"
+#include "ciaaDriverKeyboard.h"
+#include "ciaaDriverGpio.h"
 
 #include "ciaaPOSIX_stdlib.h"
 
@@ -99,8 +101,9 @@ void ciaak_start(void)
 
    /* ciaaDioDevices_init(); */
    ciaaDriverDio_init();
-
+   ciaaDriverGpio_init();
    ciaaDriverAio_init();
+   ciaaDriverKeyboard_init();
 }
 
 void *ciaak_malloc(size_t size)
