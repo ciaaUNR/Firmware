@@ -96,9 +96,9 @@ extern ciaaDevices_deviceType * ciaaDriverKeyboard_open(char const * path,
  **/
 extern int32_t ciaaDriverKeyboard_close(ciaaDevices_deviceType const * const device);
 
-/** \brief controls the gpio device
+/** \brief controls the keyboard device
  **
- ** Performs special control of a gpio device
+ ** Performs special control of a keyboard device
  **
  ** \param[in] device pointer to the device
  ** \param[in] request type of the request, depends on the device

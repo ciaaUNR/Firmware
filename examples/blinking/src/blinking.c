@@ -64,12 +64,6 @@
  */
 
 /*==================[inclusions]=============================================*/
-
-
-#include <stdio.h>
-#include <stdlib.h>
-
-
 #include "os.h"               /* <= operating system header */
 #include "ciaaPOSIX_stdio.h"  /* <= device handler header */
 #include "ciaaPOSIX_string.h" /* <= string header */
@@ -77,6 +71,27 @@
 #include "blinking.h"         /* <= own header */
 
 /*==================[macros and definitions]=================================*/
+#define ciaaPOSIX_IOCTL_GPIO_OUT 10
+#define ciaaPOSIX_IOCTL_GPIO_IN 11
+#define ciaaGPIO_0 (1<<0)
+#define ciaaGPIO_1 (1<<1)
+#define ciaaGPIO_2 (1<<2)
+#define ciaaGPIO_3 (1<<3)
+#define ciaaGPIO_4 (1<<4)
+#define ciaaGPIO_5 (1<<5)
+#define ciaaGPIO_6 (1<<6)
+#define ciaaGPIO_7 (1<<7)
+#define ciaaGPIO_8 (1<<8)
+
+
+#define KEYB_LINE_CTRL   11
+#define MAX_COLUMN       3
+
+#define MATH_FUNCTIONS      1
+#define NUMBER_FUNCTIONS    2
+#define BASICOP_FUNCTIONS   3
+#define SHIFT_FUNCTION      4
+#define CHANGE_FUNCTION     5
 
 /*==================[internal data declaration]==============================*/
 
@@ -88,20 +103,25 @@
  *
  * Device path /dev/dio/out/0
  */
-static int32_t fd_out, fd_in, fd_gpio_out, fd_gpio_in, fd_keyb;
+
+uint8_t change_keyb_func = NUMBER_FUNCTIONS;
+int (*functions[4][4])(void);
+static int32_t fd_out, fd_in, fd_gpio_out, fd_gpio_in,fd_keyb;
 static uint32_t Periodic_Task_Counter;
 static uint8 pulsador1=0;
-int (*functions[4][4])(void);
+
 
 /*==================[external data definition]===============================*/
 
 /*==================[internal functions definition]==========================*/
 
-uint8_t ciaaKeyboard_lineChange(void);
-int ciaaKeyboard_ReadCol(void);
-void ciaaKeyboard_FunctionInit(void);
 
 /*==================[external functions definition]==========================*/
+extern void ciaaKeyboard_MainTask(void);
+void ciaaKeyboard_FunctionInit(uint8_t);
+void ciaaKeyboard_MainTask(void);
+int Empty_func(void);
+
 /** \brief Main function
  *
  * This is the main entry point of the software.
@@ -115,7 +135,6 @@ int main(void)
 {
    /* Starts the operating system in the Application Mode 1 */
    /* This example has only one Application Mode */
-
    StartOS(AppMode1);
 
    /* StartOs shall never returns, but to avoid compiler warnings or errors
@@ -174,10 +193,10 @@ TASK(InitTask)
 
    /* open CIAA Keyboard from PONCHO  */
 
-   fd_keyb = ciaaPOSIX_open("/dev/keyb/keyb0",O_RDONLY);
-   if(fd_keyb == NULL){
+   fd_keyb = ciaaPOSIX_open("/dev/keyb/keyb0",O_RDWR);
+   if(fd_keyb == (-1)){
       /* Error. Keyboard can not be opened */
-      printf("Error creating OS Thread timer!\n");
+      ciaaPOSIX_printf("Error creating OS Thread timer!\n");
       while(1);
    }
 
@@ -188,10 +207,12 @@ TASK(InitTask)
 
    Periodic_Task_Counter = 0;
    SetRelAlarm(ActivatePeriodicTask, 350, 250);
+   SetRelAlarm(KeyboardLoop, 100, 250);
 
    /* terminate task */
    TerminateTask();
 }
+
 
 /** \brief Periodic Task
  *
@@ -199,6 +220,7 @@ TASK(InitTask)
  * ActivatePeriodicTask expires.
  *
  */
+
 TASK(PeriodicTask)
 {
    uint8 outputs, inputs;
@@ -225,6 +247,11 @@ TASK(PeriodicTask)
 
    /* Uso ioclt para cambiar la GPIO 0 a entrada */
    result = ciaaPOSIX_ioctl(fd_gpio_out, ciaaPOSIX_IOCTL_GPIO_IN, ciaaGPIO_0);
+   if((-1)==result){
+      /* Error. GPIO can not be changed */
+      ciaaPOSIX_printf("Error changing GPIO as input!\n");
+      while(1);
+   }
 
    /* Leo las entradas GPIO */
    /* Puenteando GPIO y GND devuelve 0, sino 1 */
@@ -268,154 +295,123 @@ TASK(PeriodicTask)
    TerminateTask();
 }
 
-/* Keyboard Code */
+/* Keyboard Task */
 
 TASK(Keyboard_Handler){
       ciaaKeyboard_MainTask();
       TerminateTask();
 }
 
-
-
-
 void ciaaKeyboard_MainTask(void){
 
-    uint8_t Row = 0;
-    static uint8_t prev_col = -1;
-    static uint8_t prev_row = -1;
+    static uint8_t Column, Row = 0;
+    static uint8_t prev_col = 5;
+    static uint8_t prev_row = 5;
+    uint8_t err;
 
-    int Column;
-    //aca falta moverlo a otro lado
-    ciaaKeyboard_FunctionInit();
+    if(0 != change_keyb_func){
+    	ciaaKeyboard_FunctionInit(change_keyb_func);
+    }
 
-	Row = ciaaKeyboard_lineChange();
-	Column = ciaaKeyboard_ReadCol();
+	err = ciaaPOSIX_ioctl(fd_keyb,KEYB_LINE_CTRL,Row);
 
+	if(err == (-1)){
+	   /* Error. ioctl function cannot be done */
+	   ciaaPOSIX_printf("Error changing Active Line\n");
+	   while(1);
+	}
+
+
+	err = ciaaPOSIX_read(fd_keyb,&Column,1);
+
+	if(err == (-1)){
+	   /* Error. read function cannot be done */
+	   ciaaPOSIX_printf("Error reading Keyboard\n");
+	   while(1);
+	}
+
+	if(0xFF != Column)
+	{
 
 	if((Row != prev_row) && (Column != prev_col))
 	{
-	    ciaaKeyboard_Action(Row,Column);
-
+		err = functions[Row][Column]();
 	    prev_row = Row;
 	    prev_col = Column;
 	}
-
-}
-
-
-
-/** \brief Keyboard Active Line Change
- *
- * This function changes the active output of the keyboard
- * The keyboard works with negative logic, so a low level output
- * is taken as active. It returns the active line:
- * counter == 0  --> T_FIL0 = 0, T_FIL1 = 1, T_FIL2 = 1, T_FIL3 = 1
- * counter == 1  --> T_FIL0 = 1, T_FIL1 = 0, T_FIL2 = 1, T_FIL3 = 1
- * counter == 2  --> T_FIL0 = 1, T_FIL1 = 1, T_FIL2 = 0, T_FIL3 = 1
- * counter == 3  --> T_FIL0 = 1, T_FIL1 = 1, T_FIL2 = 1, T_FIL3 = 0
- */
-
-
-uint8_t ciaaKeyboard_lineChange(void){
-      static uint8 counter = 4;
-
-      if(counter < 4) counter++;
-      else counter = 0;
-
-      switch(counter){
-      case 0:
-    	 ciaaPOSIX_write(fd_keyb,0xFE,1);
-      	 break;
-      case 1:
-    	 ciaaPOSIX_write(fd_keyb,0xFD,1);
-    	 break;
-      case 2:
-    	 ciaaPOSIX_write(fd_keyb,0xFB,1);
-    	 break;
-      case 3:
-    	 ciaaPOSIX_write(fd_keyb,0xF7,1);
-    	 break;
-      }
-      return counter;
-}
-
-/** \brief Read Keyboard Column
- *
- * This function returns the column value active. The read value
- * isn't the column value, so we should make a convertion
- * result == 0x0E  --> COL0 is pressed
- * result == 0x0D  --> COL1 is pressed
- * result == 0x0B  --> COL2 es pressed
- * result == 0x07  --> COL3 es pressed
- * result == -1    --> No column pressed
- */
-
-int ciaaKeyboard_ReadCol(void){
-
-	int result = 0;
-	ciaaPOSIX_read(fd_keyb,&result,1);
-	result |= 0xF0;
-	result = ~result;
-	switch(result){
-	case 1:
-		result = 0;
-		break;
-	case 2:
-		result = 1;
-		break;
-	case 4:
-		result = 2;
-		break;
-	case 8:
-		result = 3;
-		break;
-	default:
-		result = -1;
-		break;
 	}
-	return result;
+
+	if(MAX_COLUMN <= Row){
+		Row = 0;
+	}
+	else{
+		Row++;
+	}
 }
 
-
-
-
-/** \brief Keyboard Take Action Function
+/** \brief Keyboard Functions Initialization
  *
- * This function executes the action, given from Row,Column Function.
- * If Column is -1, then, nothing is executed.
- ** \param[in]  Keyboard Row pressed
- ** \param[in]  Keyboard Column pressed
- */
-void ciaaKeyboard_Action(uint8_t Row, int Column){
-   static int Prev_Column=5;
-   if (Column != (-1)){
-      if(Prev_Column != Column){
-         functions[Row][Column]();
-         Prev_Column = Column;
-      }
-   }
+ * This function executes reconfigurates the botton functions.
+ *
+ ** \param[in]  kind of function from the Keyboard. The options are:
+ ** MATH_FUNCTIONS
+ ** NUMBER_FUNCTIONS
+ ** BASICOP_FUNCTIONS
+ ** SHIFT_FUNCTION
+ ** CHANGE_FUNCTION
+  */
+
+void ciaaKeyboard_FunctionInit(uint8_t change_keyb_func){
+
+	switch(change_keyb_func){
+	case CHANGE_FUNCTION:
+	   functions[0][0] = Empty_func;
+	   functions[0][1] = Empty_func;
+	   functions[0][2] = Empty_func;
+	   functions[0][3] = Empty_func;
+	   functions[1][0] = Empty_func;
+	   functions[1][1] = Empty_func;
+	   functions[1][2] = Empty_func;
+	   functions[1][3] = Empty_func;
+	   functions[2][0] = Empty_func;
+	   functions[2][1] = Empty_func;
+	   functions[2][2] = Empty_func;
+	   functions[2][3] = Empty_func;
+	   functions[3][0] = Empty_func;
+	   functions[3][1] = Empty_func;
+	   functions[3][2] = Empty_func;
+	   functions[3][3] = Empty_func;
+	   break;
+	case NUMBER_FUNCTIONS:
+		   functions[0][0] = Empty_func;
+		   functions[0][1] = Empty_func;
+		   functions[0][2] = Empty_func;
+		   functions[0][3] = Empty_func;
+		   functions[1][0] = Empty_func;
+		   functions[1][1] = Empty_func;
+		   functions[1][2] = Empty_func;
+		   functions[1][3] = Empty_func;
+		   functions[2][0] = Empty_func;
+		   functions[2][1] = Empty_func;
+		   functions[2][2] = Empty_func;
+		   functions[2][3] = Empty_func;
+		   functions[3][0] = Empty_func;
+		   functions[3][1] = Empty_func;
+		   functions[3][2] = Empty_func;
+		   functions[3][3] = Empty_func;
+		   break;
+	}
+	change_keyb_func = 0;
+return;
 }
 
-void ciaaKeyboard_FunctionInit(void){
-    functions[0][0]=ciaaKeyboard_MainTask;
-    functions[0][1]=ciaaKeyboard_MainTask;
-    functions[0][2]=ciaaKeyboard_MainTask;
-    functions[0][3]=ciaaKeyboard_MainTask;
-    functions[1][0]=ciaaKeyboard_MainTask;
-    functions[1][1]=ciaaKeyboard_MainTask;
-    functions[1][2]=ciaaKeyboard_MainTask;
-    functions[1][3]=ciaaKeyboard_MainTask;
-    functions[2][0]=ciaaKeyboard_MainTask;
-    functions[2][1]=ciaaKeyboard_MainTask;
-    functions[2][2]=ciaaKeyboard_MainTask;
-    functions[2][3]=ciaaKeyboard_MainTask;
-    functions[3][0]=ciaaKeyboard_MainTask;
-    functions[3][1]=ciaaKeyboard_MainTask;
-    functions[3][2]=ciaaKeyboard_MainTask;
-    functions[3][3]=ciaaKeyboard_MainTask;
+int Empty_func(void){
+	change_keyb_func = 0;
+	return 1;
 }
 
 /** @} doxygen end group definition */
 /** @} doxygen end group definition */
 /** @} doxygen end group definition */
 /*==================[end of file]============================================*/
+

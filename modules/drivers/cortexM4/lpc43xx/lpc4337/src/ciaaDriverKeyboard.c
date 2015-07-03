@@ -66,6 +66,24 @@
 #include "chip.h"
 
 /*==================[macros and definitions]=================================*/
+#define KEYB_LINE_CTRL   11
+
+#define SELECTED_LINE_0    0
+#define SELECTED_LINE_1    1
+#define SELECTED_LINE_2    2
+#define SELECTED_LINE_3    3
+#define TEC_FIL0           0
+#define TEC_FIL1           1
+#define TEC_FIL2           2
+#define TEC_FIL3           3
+
+#define ACTIVATE_LINE      0
+#define DESACTIVATE_LINE   1
+
+#define TEC_COL0_MASK      0x01
+#define TEC_COL1_MASK      0x02
+#define TEC_COL2_MASK      0x04
+#define TEC_COL3_MASK      0x08
 /** \brief Pointer to Devices */
 typedef struct  {
    ciaaDevices_deviceType * const * const devices;
@@ -117,7 +135,7 @@ void ciaa_lpc4337_Keyboard_init(void)
 #elif (BOARD == edu_ciaa_nxp)
    /* GPIO */
 
-#if (PONCHO == interfaz_de_usuario)
+#if (CIAA_PNCH_USER_INTERFACE == CIAA_ENABLE)
    /* Keyboard Initialization */
      Chip_SCU_PinMux(1,5,MD_PUP|MD_EZI|MD_ZI,FUNC0);   /* GPIO1[8],  T_COL0 */
      Chip_SCU_PinMux(7,4,MD_PUP|MD_EZI|MD_ZI,FUNC0);   /* GPIO3[12], T_COL1 */
@@ -136,23 +154,6 @@ void ciaa_lpc4337_Keyboard_init(void)
      Chip_GPIO_SetDir(LPC_GPIO_PORT, 2,(1<<8),0);
 
      Chip_GPIO_ClearValue(LPC_GPIO_PORT, 2,(1<<0)|(1<<1)|(1<<2)|(1<<3));
-
-      /* GPIO IRQ Initialization*/
-      /* Matrix Keyboard has 4-pins as input (columns) and 4-pins as output (rows) */
-      /* We need to generate interrupts from inputs pin */
-     /**
-      * @brief	GPIO Interrupt Pin Select
-      * @param	PortSel	: GPIO PINTSEL interrupt, should be: 0 to 7
-      * @param	PortNum	: GPIO port number interrupt, should be: 0 to 7
-      * @param	PinNum	: GPIO pin number Interrupt , should be: 0 to 31
-      * @return	Nothing
-      * void Chip_SCU_GPIOIntPinSel(uint8_t PortSel, uint8_t PortNum, uint8_t PinNum);
-      */
-     Chip_SCU_GPIOIntPinSel(0,1,8);
-     Chip_SCU_GPIOIntPinSel(1,3,12);
-     Chip_SCU_GPIOIntPinSel(2,3,13);
-     Chip_SCU_GPIOIntPinSel(3,2,8);
-
 #endif
 
 #else
@@ -163,10 +164,10 @@ void ciaa_lpc4337_Keyboard_init(void)
 void ciaa_lpc4337_writeKeyboard(uint32_t outputNumber, uint32_t value)
 {
 #if (BOARD == edu_ciaa_nxp)
-#if (PONCHO == interfaz_de_usuario)
+#if (CIAA_PNCH_USER_INTERFACE == CIAA_ENABLE)
 	switch(outputNumber)
 	   {
-	      case 0: /* GPIO0 */
+	      case TEC_FIL0: /* FILA 0 */
 	         if(value)
 	         {
 	            Chip_GPIO_SetValue(LPC_GPIO_PORT, 2, 1<<0);
@@ -176,7 +177,7 @@ void ciaa_lpc4337_writeKeyboard(uint32_t outputNumber, uint32_t value)
 	            Chip_GPIO_ClearValue(LPC_GPIO_PORT,2, 1<<0);
 	         }
 	         break;
-	      case 1: /* GPIO1 */
+	      case TEC_FIL1: /* FILA 1 */
 	         if(value)
 	         {
 	            Chip_GPIO_SetValue(LPC_GPIO_PORT, 2, 1<<1);
@@ -186,7 +187,7 @@ void ciaa_lpc4337_writeKeyboard(uint32_t outputNumber, uint32_t value)
 	            Chip_GPIO_ClearValue(LPC_GPIO_PORT, 2, 1<<1);
 	         }
 	         break;
-	      case 2: /* GPIO2 */
+	      case TEC_FIL2: /* FILA 2 */
 	         if(value)
 	         {
 	            Chip_GPIO_SetValue(LPC_GPIO_PORT, 2, 1<<2);
@@ -196,7 +197,7 @@ void ciaa_lpc4337_writeKeyboard(uint32_t outputNumber, uint32_t value)
 	            Chip_GPIO_ClearValue(LPC_GPIO_PORT, 2, 1<<2);
 	         }
 	         break;
-	      case 3: /* GPIO3 */
+	      case TEC_FIL3: /* FILA 3 */
 	         if(value)
 	         {
 	            Chip_GPIO_SetValue(LPC_GPIO_PORT, 2, 1<<3);
@@ -223,11 +224,81 @@ extern int32_t ciaaDriverKeyboard_close(ciaaDevices_deviceType const * const dev
    return 0;
 }
 
+/** \brief keyboard ioctl function
+ *
+ * This function changes the active output of the keyboard
+ * The keyboard works with negative logic, so a low level output
+ * is taken as active.
+ ** \param[in]  device   pointer to the device to be controlled
+ ** \param[in]  request  action to be taken
+ ** \param[in]  param    line to be activated
+ */
+
+
 extern int32_t ciaaDriverKeyboard_ioctl(ciaaDevices_deviceType const * const device, int32_t const request, void * param)
 {
-   /* Hay que hacerlo todavía. Posiblemente, el teclado use interrupciones */
-	return -1;
+   uint8_t ret = -1;
+   if(device == ciaaKeyboardDevices[0])
+   {
+	   switch(request){
+	   /* CASE KEYBOARD LINE CONTROL
+	    * This request changes the active output of the keyboard
+	    * The keyboard works with negative logic, so a low level output
+	    * is taken as active. It returns the active line:
+	    * sLine == SELECTED_LINE_0  --> T_FIL0 = 0, T_FIL1 = 1, T_FIL2 = 1, T_FIL3 = 1
+	    * sLine == SELECTED_LINE_1  --> T_FIL0 = 1, T_FIL1 = 0, T_FIL2 = 1, T_FIL3 = 1
+	    * sLine == SELECTED_LINE_2  --> T_FIL0 = 1, T_FIL1 = 1, T_FIL2 = 0, T_FIL3 = 1
+	    * sLine == SELECTED_LINE_3  --> T_FIL0 = 1, T_FIL1 = 1, T_FIL2 = 1, T_FIL3 = 0
+	    */
+
+	         case KEYB_LINE_CTRL:
+	   	     switch(((int)param)){
+	   	     case SELECTED_LINE_0:
+	   	    	ciaa_lpc4337_writeKeyboard(TEC_FIL0,ACTIVATE_LINE);
+	   	    	ciaa_lpc4337_writeKeyboard(TEC_FIL1,DESACTIVATE_LINE);
+	   	    	ciaa_lpc4337_writeKeyboard(TEC_FIL2,DESACTIVATE_LINE);
+	   	    	ciaa_lpc4337_writeKeyboard(TEC_FIL3,DESACTIVATE_LINE);
+	   	    	break;
+	   	     case SELECTED_LINE_1:
+		   	    ciaa_lpc4337_writeKeyboard(TEC_FIL0,DESACTIVATE_LINE);
+		   	    ciaa_lpc4337_writeKeyboard(TEC_FIL1,ACTIVATE_LINE);
+		   	    ciaa_lpc4337_writeKeyboard(TEC_FIL2,DESACTIVATE_LINE);
+		   	    ciaa_lpc4337_writeKeyboard(TEC_FIL3,DESACTIVATE_LINE);
+		   	    break;
+	   	     case SELECTED_LINE_2:
+		   	   	ciaa_lpc4337_writeKeyboard(TEC_FIL0,DESACTIVATE_LINE);
+		   	   	ciaa_lpc4337_writeKeyboard(TEC_FIL1,DESACTIVATE_LINE);
+		   	   	ciaa_lpc4337_writeKeyboard(TEC_FIL2,ACTIVATE_LINE);
+		   	   	ciaa_lpc4337_writeKeyboard(TEC_FIL3,DESACTIVATE_LINE);
+		   	   	break;
+	   	     case SELECTED_LINE_3:
+		   	    ciaa_lpc4337_writeKeyboard(TEC_FIL0,DESACTIVATE_LINE);
+		   	    ciaa_lpc4337_writeKeyboard(TEC_FIL1,DESACTIVATE_LINE);
+		   	    ciaa_lpc4337_writeKeyboard(TEC_FIL2,DESACTIVATE_LINE);
+		   	    ciaa_lpc4337_writeKeyboard(TEC_FIL3,ACTIVATE_LINE);
+		   	    break;
+	   	     }
+	   	     break;
+
+	   	  default:
+	   		  break;
+	      }
+      ret = 1;
+   }
+   return ret;
 }
+
+/** \brief keyboard read function
+ *
+ * This function read the columns of the keyboard
+ * The keyboard works with negative logic, so a low level output
+ * is taken as active.
+ ** \param[in]  device   pointer to the device to be controlled
+ ** \param[in]  buffer   pointer to variable where the read information will be saved
+ ** \param[in]  size     size of the buffer
+ ** At the end, buffer saves the column number which has been detected as pressed. If
+ ** no switch has been pressed, buffer has 0xFF
+ */
 
 extern uint16_t ciaaDriverKeyboard_read(ciaaDevices_deviceType const * const device, uint16_t * buffer, size_t size)
 {
@@ -239,29 +310,46 @@ extern uint16_t ciaaDriverKeyboard_read(ciaaDevices_deviceType const * const dev
       if(device == ciaaKeyboardDevices[0])
       {
 #if(BOARD == edu_ciaa_nxp)
-#if (PONCHO == none)
-         buffer[0]  = Chip_GPIO_GetPinState(LPC_GPIO_PORT, 3, 0)  ? 0 : 1;
-         buffer[0] |= Chip_GPIO_GetPinState(LPC_GPIO_PORT, 3, 3)  ? 0 : 2;
-         buffer[0] |= Chip_GPIO_GetPinState(LPC_GPIO_PORT, 3, 4)  ? 0 : 4;
-         buffer[0] |= Chip_GPIO_GetPinState(LPC_GPIO_PORT, 5, 15) ? 0 : 8;
-         buffer[0] |= Chip_GPIO_GetPinState(LPC_GPIO_PORT, 5, 16) ? 0 : 16;
-         buffer[0] |= Chip_GPIO_GetPinState(LPC_GPIO_PORT, 3, 5)  ? 0 : 32;
-         buffer[0] |= Chip_GPIO_GetPinState(LPC_GPIO_PORT, 3, 6)  ? 0 : 64;
-         buffer[0] |= Chip_GPIO_GetPinState(LPC_GPIO_PORT, 3, 7)  ? 0 : 128;
-         buffer[0] |= Chip_GPIO_GetPinState(LPC_GPIO_PORT, 2, 8)  ? 0 : 256;
-#endif
-
-#if (PONCHO == interfaz_de_usuario)
+#if (CIAA_PNCH_USER_INTERFACE == CIAA_ENABLE)
          buffer[0]  = Chip_GPIO_GetPinState(LPC_GPIO_PORT, 1, 8)  ? 0 : 1;
          buffer[0] |= Chip_GPIO_GetPinState(LPC_GPIO_PORT, 3, 12) ? 0 : 2;
          buffer[0] |= Chip_GPIO_GetPinState(LPC_GPIO_PORT, 3, 13) ? 0 : 4;
          buffer[0] |= Chip_GPIO_GetPinState(LPC_GPIO_PORT, 2, 8)  ? 0 : 8;
 #endif
 #endif
-
+      if(!(TEC_COL0_MASK & buffer[0]))
+      {
+         buffer[0] = 0;
+         return 1;
+      }
+      else
+      {
+      if(!(TEC_COL1_MASK & buffer[0]))
+      {
+              buffer[0] = 1;
+              return 1;
+      }
+      else
+      {
+      if(!(TEC_COL2_MASK & buffer[0]))
+      {
+         buffer[0] = 2;
+         return 1;
+      }
+      else
+      {
+      if(!(TEC_COL3_MASK & buffer[0]))
+      {
+         buffer[0] = 3;
+         return 1;
+      }
+      }
+      }
+      }
          /* 1 byte read */
          ret = 1;
       }
+
       else {
     	  /* Put your code if you have another device */
       }
@@ -271,28 +359,10 @@ extern uint16_t ciaaDriverKeyboard_read(ciaaDevices_deviceType const * const dev
 
 extern uint16_t ciaaDriverKeyboard_write(ciaaDevices_deviceType const * const device, uint16_t const * const buffer, size_t const size)
 {
-	/* we just can write the first 4 bits. Others are dismiss. */
+	/* keyboard cannot be written */
    ssize_t ret = -1;
 
-   if(size != 0)
-   {
-      if(device == ciaaKeyboardDevices[0])
-      {
-         int32_t i;
-
-         for(i = 0; i < size*8; i++)
-         {
-            ciaa_lpc4337_writeKeyboard(i, buffer[0] & (1 << i));
-         }
-
-         /* save actual output state in layer data */
-         *((ciaaDriverKeyboard_keybType *)device->layer) = buffer[0];
-
-         /* 1 byte written */
-         ret = 1;
-      }
-   }
-   return ret;
+  return ret;
 }
 
 void ciaaDriverKeyboard_init(void)
